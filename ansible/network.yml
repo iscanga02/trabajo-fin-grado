@@ -1,0 +1,108 @@
+---
+  - name: Configuracion de la red para iSCSI Cluster
+    hosts: iscsi_cluster
+    become: true
+    vars:
+      bond0_ip:
+        sr-iscsi-01: 192.168.0.211
+        sr-iscsi-02: 192.168.0.212
+        sr-iscsi-03: 192.168.0.213
+      bond0_1_ip:
+        sr-iscsi-01: 172.16.0.211
+        sr-iscsi-02: 172.16.0.212
+        sr-iscsi-03: 172.16.0.213
+      netmask: 255.255.255.0
+      gateway: 192.168.0.1
+      dns_servers:
+        - 193.144.193.11
+        - 193.144.193.22
+        - 192.168.202.221
+    tasks:
+      - name: Actualizar el sistema
+        apt:
+          update_cache: yes
+          upgrade: dist
+          autoremove: yes
+
+      - name: Instalar paquetes necesarios para el bonding
+        apt:
+          name:
+            - ifenslave
+            - kmod
+          state: present
+
+      - name: Agregar /usr/sbin al PATH
+        lineinfile:
+          path: ~/.bashrc
+          line: 'export PATH=$PATH:/usr/sbin'
+        notify: Source bashrc
+
+      - name: Cargar el modulo de bonding
+        modprobe:
+          name: bonding
+
+      - name: Crear archivo de configuracion de la red
+        copy:
+          dest: /etc/network/interfaces
+          content: |
+            # Cargar configuraciones de interfaces adicionales
+            source /etc/network/interfaces.d/*
+
+            # Interfaz de red loopback
+            auto lo
+            iface lo inet loopback
+
+            # Configuracion para la interfaz virtual bond0 (red de gestion)
+            auto bond0
+            iface bond0 inet static
+                address {{ bond0_ip[inventory_hostname] }}
+                netmask {{ netmask }}
+                gateway {{ gateway }}
+                bond-slaves enp1s0 enp2s0
+                bond-mode active-backup
+                bond-miimon 100
+
+            # Configuracion para la interfaz enp1s0
+            auto enp1s0
+            iface enp1s0 inet manual
+                bond-master bond0
+
+            # Configuracion para la interfaz enp2s0
+            auto enp2s0
+            iface enp2s0 inet manual
+                bond-master bond0
+
+            # Configuracion para la interfaz virtual bond0:1 (red de cluster)
+            auto bond0:1
+            iface bond0:1 inet static
+                address {{ bond0_1_ip[inventory_hostname] }}
+                netmask {{ netmask }}
+
+      - name: Agregar entradas al archivo de hosts
+        lineinfile:
+          path: /etc/hosts
+          create: yes
+          line: "{{ item }}"
+        with_items:
+          - '172.16.0.211 sr-iscsi-01'
+          - '172.16.0.212 sr-iscsi-02'
+          - '172.16.0.213 sr-iscsi-03'
+
+      - name: Configurar servidores DNS
+        copy:
+          dest: /etc/resolv.conf
+          content: |
+            {% for server in dns_servers %}
+            nameserver {{ server }}
+            {% endfor %}
+
+    handlers:
+      - name: Source bashrc
+        shell: source ~/.bashrc
+        when: ansible_facts['ansible_user'] == 'root'
+
+      - name: Reiniciar el servicio de red
+        reboot:
+          msg: "Reiniciando el sistema para aplicar cambios de red"
+          pre_reboot_delay: 5
+          reboot_timeout: 600

@@ -1,0 +1,65 @@
+---
+    - name: Configuracion de Pacemaker y Corosync para iSCSI
+      hosts: iscsi_cluster
+      become: true
+      vars:
+        hacluster_password: "cluster"
+        cluster_name: "mycluster"
+        cluster_nodes:
+          - sr-iscsi-01 addr=172.16.0.211
+          - sr-iscsi-02 addr=172.16.0.212
+          - sr-iscsi-03 addr=172.16.0.213
+
+      tasks:
+        - name: Actualizar el sistema
+          apt:
+            update_cache: yes
+            upgrade: dist
+            autoremove: yes
+
+        - name: Instalar paquetes necesarios para Pacemaker y Corosync
+          apt:
+            name:
+              - corosync
+              - pacemaker
+              - pcs
+              - resource-agents
+              - fence-agents
+            state: present
+
+        - name: Habilitar los servicios de Pacemaker y Corosync
+          systemd:
+            name: "{{ item }}"
+            enabled: yes
+          loop:
+            - corosync
+            - pacemaker
+            - pcsd
+
+        - name: Cambiar la contrasenha del usuario hacluster
+          command: echo "hacluster:{{ hacluster_password }}" | chpasswd
+
+        - name: Autenticar los nodos del cluster
+          command: pcs host auth sr-iscsi-01 sr-iscsi-02 sr-iscsi-03 -u hacluster -p {{ hacluster_password }}
+          when: inventory_hostname == "sr-iscsi-01"
+
+        - name: Configurar el cluster
+          command: pcs cluster setup {{ cluster_name }} {{ item }} --force
+          with_items: "{{ cluster_nodes }}"
+          when: inventory_hostname == "sr-iscsi-01"
+
+        - name: Iniciar el cluster
+          command: pcs cluster start --all
+          when: inventory_hostname == "sr-iscsi-01"
+
+        - name: Habilitar el cluster en el arranque
+          command: pcs cluster enable --all
+          when: inventory_hostname == "sr-iscsi-01"
+
+        - name: Deshabilitar el fence
+          command: pcs property set stonith-enabled=false
+          when: inventory_hostname == "sr-iscsi-01"
+
+        - name: Configurar la politica de quorum
+          command: pcs property set no-quorum-policy=stop
+          when: inventory_hostname == "sr-iscsi-01"

@@ -1,0 +1,4 @@
+[iscsi_cluster]
+sr-iscsi-01 ansible_host=192.168.0.211
+sr-iscsi-02 ansible_host=192.168.0.212
+sr-iscsi-03 ansible_host=192.168.0.213
